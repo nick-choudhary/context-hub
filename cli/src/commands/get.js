@@ -7,17 +7,14 @@ import { output, error, info } from '../lib/output.js';
 import { trackEvent } from '../lib/analytics.js';
 
 /**
- * Core fetch logic shared by `get docs` and `get skills`.
- * @param {string} type - "doc" or "skill"
- * @param {string[]} ids - one or more entry ids
- * @param {object} opts - command options (lang, version, output, full)
- * @param {object} globalOpts - global options (json)
+ * Fetch one or more entries by ID. Auto-detects doc vs skill per entry.
  */
-async function fetchEntries(type, ids, opts, globalOpts) {
+async function fetchEntries(ids, opts, globalOpts) {
   const results = [];
 
   for (const id of ids) {
-    const result = getEntry(id, type);
+    // Search both docs and skills — auto-detect type
+    const result = getEntry(id);
 
     if (result.ambiguous) {
       error(
@@ -27,10 +24,11 @@ async function fetchEntries(type, ids, opts, globalOpts) {
     }
 
     if (!result.entry) {
-      error(`Entry "${id}" not found in ${type}s.`, globalOpts);
+      error(`Entry "${id}" not found.`, globalOpts);
     }
 
     const entry = result.entry;
+    const type = entry.languages ? 'doc' : 'skill';
     const resolved = resolveDocPath(entry, opts.lang, opts.version);
 
     if (!resolved) {
@@ -52,10 +50,10 @@ async function fetchEntries(type, ids, opts, globalOpts) {
     try {
       if (opts.full && resolved.files.length > 0) {
         const allFiles = await fetchDocFull(resolved.source, resolved.path, resolved.files);
-        results.push({ id: entry.id, files: allFiles, path: resolved.path });
+        results.push({ id: entry.id, type, files: allFiles, path: resolved.path });
       } else {
         const content = await fetchDoc(resolved.source, entryFile.filePath);
-        results.push({ id: entry.id, content, path: entryFile.filePath });
+        results.push({ id: entry.id, type, content, path: entryFile.filePath });
       }
     } catch (err) {
       error(err.message, globalOpts);
@@ -64,7 +62,7 @@ async function fetchEntries(type, ids, opts, globalOpts) {
 
   // Track fetches
   for (const r of results) {
-    trackEvent(type === 'doc' ? 'doc_fetched' : 'skill_fetched', {
+    trackEvent(r.type === 'doc' ? 'doc_fetched' : 'skill_fetched', {
       entry_id: r.id,
       full: !!opts.full,
       lang: opts.lang || undefined,
@@ -74,7 +72,6 @@ async function fetchEntries(type, ids, opts, globalOpts) {
   // Output
   if (opts.output) {
     if (opts.full) {
-      // --full -o: write individual files preserving directory structure
       for (const r of results) {
         if (r.files) {
           const baseDir = ids.length > 1 ? join(opts.output, r.id) : opts.output;
@@ -111,18 +108,16 @@ async function fetchEntries(type, ids, opts, globalOpts) {
       }
     }
     if (globalOpts.json) {
-      console.log(JSON.stringify(results.map((r) => ({ id: r.id, path: opts.output }))));
+      console.log(JSON.stringify(results.map((r) => ({ id: r.id, type: r.type, path: opts.output }))));
     }
   } else {
-    // stdout
     if (results.length === 1 && !results[0].files) {
       output(
-        { id: results[0].id, content: results[0].content, path: results[0].path },
+        { id: results[0].id, type: results[0].type, content: results[0].content, path: results[0].path },
         (data) => process.stdout.write(data.content),
         globalOpts
       );
     } else {
-      // Concatenate all content (--full to stdout, or multiple entries)
       const parts = results.flatMap((r) => {
         if (r.files) {
           return r.files.map((f) => `# FILE: ${f.name}\n\n${f.content}`);
@@ -131,7 +126,7 @@ async function fetchEntries(type, ids, opts, globalOpts) {
       });
       const combined = parts.join('\n\n---\n\n');
       output(
-        results.map((r) => ({ id: r.id, path: r.path })),
+        results.map((r) => ({ id: r.id, type: r.type, path: r.path })),
         () => process.stdout.write(combined),
         globalOpts
       );
@@ -140,29 +135,15 @@ async function fetchEntries(type, ids, opts, globalOpts) {
 }
 
 export function registerGetCommand(program) {
-  const get = program
-    .command('get')
-    .description('Retrieve docs or skills');
-
-  get
-    .command('docs <ids...>')
-    .description('Fetch documentation content')
-    .option('--lang <language>', 'Language variant')
-    .option('--version <version>', 'Specific version')
+  program
+    .command('get <ids...>')
+    .description('Fetch docs or skills by ID (auto-detects type)')
+    .option('--lang <language>', 'Language variant (for docs)')
+    .option('--version <version>', 'Specific version (for docs)')
     .option('-o, --output <path>', 'Write to file or directory')
     .option('--full', 'Fetch all files (not just entry point)')
     .action(async (ids, opts) => {
       const globalOpts = program.optsWithGlobals();
-      await fetchEntries('doc', ids, opts, globalOpts);
-    });
-
-  get
-    .command('skills <ids...>')
-    .description('Fetch skill content')
-    .option('-o, --output <path>', 'Write to file or directory')
-    .option('--full', 'Fetch all files (not just entry point)')
-    .action(async (ids, opts) => {
-      const globalOpts = program.optsWithGlobals();
-      await fetchEntries('skill', ids, opts, globalOpts);
+      await fetchEntries(ids, opts, globalOpts);
     });
 }
