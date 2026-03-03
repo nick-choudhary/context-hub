@@ -3,6 +3,7 @@ import { join, relative, dirname } from 'node:path';
 import chalk from 'chalk';
 import { parseFrontmatter } from '../lib/frontmatter.js';
 import { info } from '../lib/output.js';
+import { trackEvent } from '../lib/analytics.js';
 
 /**
  * Recursively find all DOC.md and SKILL.md files under a directory.
@@ -307,11 +308,12 @@ export function registerBuildCommand(program) {
         // Skip registry.json in author dirs
         cpSync(src, dest, {
           recursive: true,
-          filter: (s) => !s.endsWith('/registry.json') || s === join(src, 'registry.json') === false,
+          filter: (s) => !s.endsWith('/registry.json'),
         });
       }
 
       const summary = { docs: allDocs.length, skills: allSkills.length, warnings: allWarnings.length };
+      trackEvent('build', { doc_count: allDocs.length, skill_count: allSkills.length }).catch(() => {});
       if (globalOpts.json) {
         console.log(JSON.stringify({ ...summary, output: outputDir }));
       } else {

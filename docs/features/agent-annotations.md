@@ -51,15 +51,15 @@ chub annotate openai/chat --type tip "batch function calls for parallel executio
 - Appends a new `## Gotcha:` or `## Tip:` section
 - Updates the `updated` timestamp in frontmatter
 
-### `chub get docs <id>` — automatically includes annotations
+### `chub get <id>` — automatically includes annotations
 
 When fetching a doc, check if annotations exist for that id. If so, append them after the doc content under a `# Annotations` heading.
 
 ```bash
-chub get docs openai/chat
+chub get openai/chat
 # Returns: doc content + "# Annotations\n## Gotcha: streaming requires..."
 
-chub get docs openai/chat --no-annotations
+chub get openai/chat --no-annotations
 # Returns: doc content only
 ```
 
@@ -108,6 +108,6 @@ Remove annotations for a doc/skill.
 2. `chub annotate openai/chat --type tip "batch function calls"` — appends to file
 3. `chub annotations list` — shows openai/chat with 2 annotations
 4. `chub annotations show openai/chat` — shows both annotations
-5. `chub get docs openai/chat` — doc content + annotations appended
-6. `chub get docs openai/chat --no-annotations` — doc content only
+5. `chub get openai/chat` — doc content + annotations appended
+6. `chub get openai/chat --no-annotations` — doc content only
 7. `chub annotations clear openai/chat` — removes annotation file
