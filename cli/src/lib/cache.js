@@ -1,8 +1,19 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createWriteStream } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { getChubDir, loadConfig } from './config.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Path to bundled content shipped with the npm package.
+ * Contains registry.json + doc files built from content/ at publish time.
+ */
+function getBundledDir() {
+  return join(__dirname, '..', '..', 'dist');
+}
 
 function getSourceDir(sourceName) {
   return join(getChubDir(), 'sources', sourceName);
@@ -51,7 +62,14 @@ async function fetchRemoteRegistry(source, force = false) {
   }
 
   const url = `${source.url}/registry.json`;
-  const res = await fetch(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  let res;
+  try {
+    res = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) {
     throw new Error(`Failed to fetch registry from ${source.name}: ${res.status} ${res.statusText}`);
   }
@@ -95,7 +113,14 @@ export async function fetchFullBundle(sourceName) {
   const url = `${source.url}/bundle.tar.gz`;
   const tmpPath = join(getSourceDir(sourceName), 'bundle.tar.gz');
 
-  const res = await fetch(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  let res;
+  try {
+    res = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) {
     throw new Error(`Failed to fetch bundle from ${sourceName}: ${res.status} ${res.statusText}`);
   }
@@ -139,9 +164,22 @@ export async function fetchDoc(source, docPath) {
     return readFileSync(cachedPath, 'utf8');
   }
 
-  // Fetch from CDN
+  // Check bundled content (shipped with npm package)
+  const bundledPath = join(getBundledDir(), docPath);
+  if (existsSync(bundledPath)) {
+    return readFileSync(bundledPath, 'utf8');
+  }
+
+  // Fetch from CDN (optional — only if source has a URL)
   const url = `${source.url}/${docPath}`;
-  const res = await fetch(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  let res;
+  try {
+    res = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) {
     throw new Error(`Failed to fetch ${docPath} from ${source.name}: ${res.status} ${res.statusText}`);
   }
@@ -282,6 +320,17 @@ export async function ensureRegistry() {
     return;
   }
 
-  // No registries at all — must download remote ones
+  // No registries at all — try bundled content first, then network
+  const bundledRegistry = join(getBundledDir(), 'registry.json');
+  if (existsSync(bundledRegistry)) {
+    // Seed cache from bundled content (ships with npm package)
+    const defaultDir = getSourceDir('default');
+    mkdirSync(defaultDir, { recursive: true });
+    writeFileSync(getSourceRegistryPath('default'), readFileSync(bundledRegistry, 'utf8'));
+    writeMeta('default', { lastUpdated: 0, bundledSeed: true }); // lastUpdated=0 → stale, so chub update will refresh
+    return;
+  }
+
+  // No bundled content either — must download from remote
   await fetchAllRegistries(true);
 }

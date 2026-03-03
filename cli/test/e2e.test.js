@@ -114,38 +114,38 @@ describe('chub CLI e2e', () => {
     });
   });
 
-  describe('get docs', () => {
+  describe('get', () => {
     it('fetches single-language doc (auto-infers lang)', () => {
-      const out = chub(['get', 'docs', 'acme/widgets']);
+      const out = chub(['get', 'acme/widgets']);
       expect(out).toContain('# Acme Widgets API');
       expect(out).toContain('npm install @acme/widgets');
     });
 
     it('fetches multi-language doc with --lang', () => {
-      const out = chub(['get', 'docs', 'multilang/client', '--lang', 'py']);
+      const out = chub(['get', 'multilang/client', '--lang', 'py']);
       expect(out).toContain('# Multilang Client — Python');
       expect(out).toContain('from multilang import Client');
     });
 
     it('fetches js variant with --lang js', () => {
-      const out = chub(['get', 'docs', 'multilang/client', '--lang', 'js']);
+      const out = chub(['get', 'multilang/client', '--lang', 'js']);
       expect(out).toContain('# Multilang Client — JavaScript');
       expect(out).toContain("import { Client } from 'multilang'");
     });
 
     it('errors on multi-lang without --lang', () => {
-      const out = chub(['get', 'docs', 'multilang/client'], { expectError: true });
+      const out = chub(['get', 'multilang/client'], { expectError: true });
       expect(out).toContain('Multiple languages');
       expect(out).toContain('--lang');
     });
 
-    it('errors on nonexistent doc', () => {
-      const out = chub(['get', 'docs', 'fake/thing'], { expectError: true });
+    it('errors on nonexistent entry', () => {
+      const out = chub(['get', 'fake/thing'], { expectError: true });
       expect(out).toContain('not found');
     });
 
     it('fetches --full with all files', () => {
-      const out = chub(['get', 'docs', 'acme/widgets', '--full']);
+      const out = chub(['get', 'acme/widgets', '--full']);
       expect(out).toContain('FILE: DOC.md');
       expect(out).toContain('FILE: references/advanced.md');
       expect(out).toContain('Batch Operations');
@@ -153,29 +153,17 @@ describe('chub CLI e2e', () => {
 
     it('writes to file with -o', () => {
       const tmpFile = join(BUILD_OUTPUT, '_test_output.md');
-      chub(['get', 'docs', 'acme/widgets', '-o', tmpFile]);
+      chub(['get', 'acme/widgets', '-o', tmpFile]);
       expect(existsSync(tmpFile)).toBe(true);
       const content = readFileSync(tmpFile, 'utf8');
       expect(content).toContain('# Acme Widgets API');
       rmSync(tmpFile, { force: true });
     });
-  });
 
-  describe('get skills', () => {
     it('fetches skill content', () => {
-      const out = chub(['get', 'skills', 'testskills/deploy']);
+      const out = chub(['get', 'testskills/deploy']);
       expect(out).toContain('# Deploy Skill');
       expect(out).toContain('Automate deployments');
-    });
-
-    it('errors when fetching a doc as a skill', () => {
-      const out = chub(['get', 'skills', 'acme/widgets'], { expectError: true });
-      expect(out).toContain('not found in skills');
-    });
-
-    it('errors when fetching a skill as a doc', () => {
-      const out = chub(['get', 'docs', 'testskills/deploy'], { expectError: true });
-      expect(out).toContain('not found in docs');
     });
   });
 

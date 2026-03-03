@@ -41,7 +41,7 @@ We initially treated all content uniformly — just tags, no rigid types. But do
 | Install target | `.context/` or any file | `.claude/skills/`, `.cursor/skills/`, etc. |
 | Language/version | Yes — per-language, per-version variants | No — skills are typically language-agnostic |
 
-This distinction drove the `get docs` / `get skills` split and the registry format split into `docs[]` and `skills[]`.
+This distinction drives the registry format split into `docs[]` and `skills[]`. The CLI uses a single `chub get <id>` command that auto-detects the type.
 
 ### Why `docs[]` and `skills[]` in the registry (not `entries[]`)?
 The original format had a single `entries[]` array with a `provides` field to indicate doc/skill. We split it because:
@@ -49,41 +49,35 @@ The original format had a single `entries[]` array with a `provides` field to in
 1. **Different schemas**: Docs need `languages[].versions[]` nesting. Skills are flat — no language or version, just `name`, `path`, `files`.
 2. **Array membership IS the type**: No need for a `provides` field. A doc is in `docs[]`, a skill is in `skills[]`.
 3. **Bundled entries**: When a topic has both DOC.md and SKILL.md, they appear as separate items in their respective arrays. Clean separation.
-4. **CLI mapping**: `chub get docs` searches `docs[]`. `chub get skills` searches `skills[]`. `chub search` searches both.
+4. **CLI mapping**: `chub get` searches both arrays and auto-detects type. `chub search` searches both.
 
 ### Why skills have no language or version?
 Skills are behavioral instructions ("how to integrate Stripe", "how to write Playwright login flows"). They're typically language-agnostic or written for a single context. Adding language/version nesting would add complexity without value — a skill author who needs Python and TypeScript variants can create two separate skill entries.
 
 Docs, on the other hand, have fundamentally different content per language (Python SDK vs JavaScript SDK) and evolve with API versions.
 
-### Why `get docs` / `get skills` (not just `get`)?
-We considered several approaches:
-1. `chub get <id>` with `--install` flag for skills — blurs intent
-2. `chub get <id>` / `chub install <id>` — different verbs for different actions
-3. `chub get docs <id>` / `chub get skills <id>` — explicit category in command
-4. `chub get-docs <id>` / `chub get-skills <id>` — hyphenated commands
-
-We chose (3) because: the verb "get" is correct for both (you're fetching content), the noun clarifies what you're getting, and it reads like natural English. `--lang` and `--version` flags only apply to `get docs`, not `get skills`.
+### Why a single `get` command (not `get docs` / `get skills`)?
+We originally had `chub get docs <id>` and `chub get skills <id>` as separate subcommands. We simplified to `chub get <id>` because the CLI can auto-detect the type from the registry (docs have `languages[]`, skills don't). The user shouldn't need to know internal taxonomy to fetch content. `--lang` and `--version` flags apply when the entry is a doc and are silently ignored for skills.
 
 ### Why DOC.md and SKILL.md (not just SKILL.md)?
 We considered using SKILL.md for everything since the Agent Skills spec is the format standard. But calling a 50K API reference "SKILL.md" is semantically misleading — agents that scan for skills would load doc descriptions into their system prompt (wasting ~100 tokens per doc entry), and might "activate" a doc when the user just wants to write code.
 
 ### Why `--lang` flag instead of positional argument?
-Originally: `chub get openai-chat python`. Changed to: `chub get docs openai/chat-api --lang python`.
+Originally: `chub get openai-chat python`. Changed to: `chub get openai/chat-api --lang python`.
 
 Reasons:
-1. Multi-id support (`chub get docs openai/chat-api stripe/payments`) would make a positional language argument ambiguous
+1. Multi-id support (`chub get openai/chat-api stripe/payments`) would make a positional language argument ambiguous
 2. Language can be auto-inferred when an entry has only one — the flag is only needed for disambiguation
 3. Flags are self-documenting; a bare `python` after an id is ambiguous to readers
 
 ### Why multi-id support?
-Agents often need multiple docs in one operation. Rather than looping, `chub get docs openai/chat-api stripe/payments` fetches both. Output is concatenated with `---` separators for stdout, or written as separate files when `-o` points to a directory.
+Agents often need multiple entries in one operation. Rather than looping, `chub get openai/chat-api stripe/payments` fetches both. Output is concatenated with `---` separators for stdout, or written as separate files when `-o` points to a directory.
 
 ### Why one CLI, not two?
 We considered separate tools for docs and skills. Rejected because they share the same registry, config, sources, search, and cache infrastructure.
 
 ### Why 5+1 commands?
-We started with 8 commands and trimmed to 5 core + 1 build: `search`, `get docs`, `get skills`, `update`, `cache`, and `build`. `list` and `info` were merged into `search`. `pull` was dropped in favor of unix piping.
+We started with 8 commands and trimmed to 5 core + 1 build: `search`, `get`, `update`, `cache`, `feedback`, and `build`. `list` and `info` were merged into `search`. `get docs` and `get skills` were merged into `get` with auto-detection.
 
 ### Why `source` field + config-level filtering?
 Each entry has `source: "official" | "maintainer" | "community"`. The human controls trust policy via `~/.chub/config.yaml`. An enterprise can restrict agents to `source: official,maintainer` without the agent needing to know about quality tiers.
@@ -221,7 +215,7 @@ openai/
                 └── structured-outputs.md
 ```
 
-Both DOC.md files have `name: chat-api` (under the `openai/` author directory) — they get grouped into `id: openai/chat-api`, into one `docs[]` entry with multiple versions pointing to different paths. `recommendedVersion` is the highest semver. `chub get docs openai/chat-api` gets the latest; `--version 1.52.0` gets the older docs.
+Both DOC.md files have `name: chat-api` (under the `openai/` author directory) — they get grouped into `id: openai/chat-api`, into one `docs[]` entry with multiple versions pointing to different paths. `recommendedVersion` is the highest semver. `chub get openai/chat-api` gets the latest; `--version 1.52.0` gets the older docs.
 
 ### Language-specific docs
 
@@ -292,8 +286,7 @@ Upload `dist/` to any static file host (S3, CloudFlare R2, GitHub Pages). The CL
 | Command | Purpose | Key Options |
 |---|---|---|
 | `chub search [query]` | Search (no query = list all, exact id = detail) | `--tags`, `--lang`, `--limit`, `--json` |
-| `chub get docs <ids...>` | Fetch documentation content | `--lang`, `--version`, `--full`, `-o <path>`, `--json` |
-| `chub get skills <ids...>` | Fetch skill content | `--full`, `-o <path>`, `--json` |
+| `chub get <ids...>` | Fetch docs or skills (auto-detects type) | `--lang`, `--version`, `--full`, `-o <path>`, `--json` |
 | `chub update` | Refresh cached registry | `--force`, `--full` |
 | `chub cache status\|clear` | Manage local cache | |
 | `chub build <content-dir>` | Build registry from content | `-o`, `--base-url`, `--validate-only`, `--json` |
@@ -306,19 +299,18 @@ Upload `dist/` to any static file host (S3, CloudFlare R2, GitHub Pages). The CL
 - Results show `[doc]` or `[skill]` type labels
 
 ### How `get` works
-- `chub get docs openai/chat-api` — fetch DOC.md (entry point only)
-- `chub get docs openai/chat-api --full` — fetch all files in the entry
-- `chub get docs openai/chat-api --full -o .context/openai/` — write individual files preserving structure
-- `chub get docs openai/chat-api --lang python` — specify language when multiple available
-- `chub get docs openai/chat-api stripe/payments` — fetch multiple entries at once
-- `chub get skills pw-community/login-flows` — fetch SKILL.md from a skill entry
-- `chub get skills openai/chat-api` → error: `Entry "openai/chat-api" not found in skills.`
+- `chub get openai/chat-api --lang python` — auto-detects doc, fetches DOC.md
+- `chub get openai/chat-api --full` — fetch all files in the entry
+- `chub get openai/chat-api --full -o .context/openai/` — write individual files preserving structure
+- `chub get openai/chat-api stripe/payments --lang js` — fetch multiple entries at once
+- `chub get pw-community/login-flows` — auto-detects skill, fetches SKILL.md
+- `chub get nonexistent/thing` → error: `Entry "nonexistent/thing" not found.`
 
 ### Language inference
 - Entry has one language → auto-selected, no `--lang` needed
 - Entry has multiple languages, no `--lang` → error with suggestion
 - `--lang` applies to all ids in a multi-id command
-- `--lang` and `--version` only apply to `get docs`, not `get skills`
+- `--lang` and `--version` apply to doc entries, silently ignored for skills
 
 ### Output modes
 - **Default**: Human-friendly, colored terminal output
@@ -334,22 +326,22 @@ chub search "stripe payments" --json | jq -r '.results[0].id'
 
 # Full pipeline: search → pick best → fetch → write to file
 ID=$(chub search "stripe payments" --json | jq -r '.results[0].id')
-chub get docs "$ID" --lang js -o .context/stripe.md
+chub get "$ID" --lang js -o .context/stripe.md
 
 # Fetch top 3 results
-chub search "stripe" --json | jq -r '.results[:3][].id' | xargs chub get docs -o .context/
+chub search "stripe" --json | jq -r '.results[:3][].id' | xargs chub get -o .context/
 
-# Fetch multiple docs at once
-chub get docs openai/chat-api stripe/payments -o .context/
+# Fetch multiple at once
+chub get openai/chat-api stripe/payments -o .context/
 
 # Install a skill into Claude Code's skill directory
-chub get skills pw-community/login-flows -o .claude/skills/login-flows/SKILL.md
+chub get pw-community/login-flows -o .claude/skills/login-flows/SKILL.md
 
 # Install a skill with all companion files
-chub get skills pw-community/login-flows --full -o .claude/skills/login-flows/
+chub get pw-community/login-flows --full -o .claude/skills/login-flows/
 
 # Multi-source: disambiguate with source: prefix
-chub get docs internal:openai/chat-api
+chub get internal:openai/chat-api
 ```
 
 ---
@@ -362,7 +354,7 @@ All content follows the [Agent Skills spec](https://agentskills.io/specification
 
 ### What the CDN serves
 ```
-cdn.contexthub.dev/v1/
+cdn.aichub.org/v1/
 ├── registry.json                                        # Index (~100KB)
 ├── bundle.tar.gz                                        # Full bundle (optional)
 ├── stripe/docs/payments/DOC.md                         # Entry point
@@ -373,9 +365,8 @@ cdn.contexthub.dev/v1/
 ### How the CLI uses it
 1. `chub update` → fetches `registry.json` only (~100KB), caches locally
 2. `chub search` → searches local registry (no network)
-3. `chub get docs <id>` → fetches DOC.md (entry point), checks cache first
-4. `chub get docs <id> --full` → fetches all files listed in registry
-5. `chub get skills <id>` → fetches SKILL.md
+3. `chub get <id>` → auto-detects type, fetches entry point (DOC.md or SKILL.md), checks cache first
+4. `chub get <id> --full` → fetches all files listed in registry
 6. `chub update --full` → downloads entire `bundle.tar.gz` for offline use
 
 ### Local cache layout
@@ -401,7 +392,7 @@ Local path sources are **not cached** — the CLI reads directly from the config
 ```json
 {
   "version": "1.0.0",
-  "base_url": "https://cdn.contexthub.dev/v1",
+  "base_url": "https://cdn.aichub.org/v1",
   "generated": "2026-02-02T00:00:00.000Z",
   "docs": [
     {
@@ -444,7 +435,7 @@ Local path sources are **not cached** — the CLI reads directly from the config
 ```
 
 **Doc entry fields:**
-- `id` — unique identifier in `author/name` format, used by `chub get docs <id>`
+- `id` — unique identifier in `author/name` format, used by `chub get <id>`
 - `name` — short name from frontmatter (the part after the author prefix)
 - `description` — short description for search results
 - `source` — `official` (library author), `maintainer` (context-hub team), `community`
@@ -464,7 +455,7 @@ Local path sources are **not cached** — the CLI reads directly from the config
 # Multi-source (recommended)
 sources:
   - name: community
-    url: https://cdn.contexthub.dev/v1       # Remote CDN
+    url: https://cdn.aichub.org/v1       # Remote CDN
   - name: internal
     path: /path/to/local/docs                # Local folder (build output)
 
@@ -498,7 +489,7 @@ Content follows the [Agent Skills open standard](https://agentskills.io/specific
 | Build pipeline | None | None | `chub build` |
 
 ### Why adopt the standard?
-Makes chub content interoperable with the broader agent ecosystem. A skill fetched via `chub get skills` can be piped directly into any agent's skill directory and discovered natively.
+Makes chub content interoperable with the broader agent ecosystem. A skill fetched via `chub get` can be piped directly into any agent's skill directory and discovered natively.
 
 ### How chub extends it
 - Registry-based search and discovery over network
@@ -521,7 +512,7 @@ chub-first-draft/
 │   │   ├── index.js              # Commander setup, global --json, preAction cache hook
 │   │   ├── commands/
 │   │   │   ├── search.js         # search / list / info (all in one)
-│   │   │   ├── get.js            # get docs / get skills subcommands
+│   │   │   ├── get.js            # get command (auto-detects doc/skill)
 │   │   │   ├── build.js          # build registry from content directory
 │   │   │   ├── update.js         # refresh registry / full bundle
 │   │   │   └── cache.js          # cache status / clear

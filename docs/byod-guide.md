@@ -62,7 +62,7 @@ Add your local build output as a source in `~/.chub/config.yaml`:
 ```yaml
 sources:
   - name: community
-    url: https://cdn.contexthub.dev/v1
+    url: https://cdn.aichub.org/v1
   - name: internal
     path: /path/to/.chub-local
 ```
@@ -71,8 +71,8 @@ Now everything works across both sources:
 
 ```bash
 chub search "api"                          # searches public + private
-chub get docs mycompany/internal-api       # fetches your private doc
-chub get skills mycompany/deploy-staging   # fetches your private skill
+chub get mycompany/internal-api             # fetches your private doc
+chub get mycompany/deploy-staging           # fetches your private skill
 ```
 
 ## Enterprise use
@@ -82,8 +82,8 @@ Put your content directory in a shared git repo or internal CDN. Everyone on the
 If a private id collides with a public one, use the `source:` prefix:
 
 ```bash
-chub get docs internal:openai/chat    # your internal version
-chub get docs community:openai/chat   # the public version
+chub get internal:openai/chat           # your internal version
+chub get community:openai/chat         # the public version
 ```
 
 One CLI, one search, public and private content layered together.

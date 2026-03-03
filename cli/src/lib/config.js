@@ -3,13 +3,16 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { parse as parseYaml } from 'yaml';
 
-const DEFAULT_CDN_URL = 'https://github.com/context-hub/context-hub/releases/latest/download';
+const DEFAULT_CDN_URL = 'https://cdn.aichub.org/v1';
+const DEFAULT_TELEMETRY_URL = 'https://api.aichub.org/v1';
 
 const DEFAULTS = {
   output_dir: '.context',
   refresh_interval: 86400,
   output_format: 'human',
   source: 'official,maintainer,community',
+  telemetry: true,
+  telemetry_url: DEFAULT_TELEMETRY_URL,
 };
 
 let _config = null;
@@ -46,6 +49,8 @@ export function loadConfig() {
     refresh_interval: fileConfig.refresh_interval ?? DEFAULTS.refresh_interval,
     output_format: fileConfig.output_format || DEFAULTS.output_format,
     source: fileConfig.source || DEFAULTS.source,
+    telemetry: fileConfig.telemetry !== undefined ? fileConfig.telemetry : DEFAULTS.telemetry,
+    telemetry_url: fileConfig.telemetry_url || DEFAULTS.telemetry_url,
   };
 
   return _config;

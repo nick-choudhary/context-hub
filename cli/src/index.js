@@ -9,6 +9,8 @@ import { registerCacheCommand } from './commands/cache.js';
 import { registerSearchCommand } from './commands/search.js';
 import { registerGetCommand } from './commands/get.js';
 import { registerBuildCommand } from './commands/build.js';
+import { registerFeedbackCommand } from './commands/feedback.js';
+import { trackEvent, shutdownAnalytics } from './lib/analytics.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
@@ -24,17 +26,16 @@ ${chalk.bold.underline('Getting Started')}
   ${chalk.dim('$')} chub search                                ${chalk.dim('# list everything available')}
   ${chalk.dim('$')} chub search "stripe"                       ${chalk.dim('# fuzzy search')}
   ${chalk.dim('$')} chub search stripe/payments                ${chalk.dim('# exact id → full detail')}
-  ${chalk.dim('$')} chub get docs stripe/payments              ${chalk.dim('# print doc to terminal')}
-  ${chalk.dim('$')} chub get docs stripe/payments -o doc.md    ${chalk.dim('# save to file')}
-  ${chalk.dim('$')} chub get docs stripe/payments --lang py    ${chalk.dim('# specific language')}
-  ${chalk.dim('$')} chub get skills pw/login-flows             ${chalk.dim('# fetch a skill')}
-  ${chalk.dim('$')} chub get docs openai/chat stripe/payments  ${chalk.dim('# fetch multiple')}
+  ${chalk.dim('$')} chub get stripe/api                        ${chalk.dim('# print doc to terminal')}
+  ${chalk.dim('$')} chub get stripe/api -o doc.md              ${chalk.dim('# save to file')}
+  ${chalk.dim('$')} chub get openai/chat --lang py             ${chalk.dim('# specific language')}
+  ${chalk.dim('$')} chub get pw-community/login-flows          ${chalk.dim('# fetch a skill')}
+  ${chalk.dim('$')} chub get openai/chat stripe/api            ${chalk.dim('# fetch multiple')}
 
 ${chalk.bold.underline('Commands')}
 
   ${chalk.bold('search')} [query]              Search docs and skills (no query = list all)
-  ${chalk.bold('get docs')} <ids...>           Fetch documentation content
-  ${chalk.bold('get skills')} <ids...>         Fetch skill content
+  ${chalk.bold('get')} <ids...>                 Fetch docs or skills by ID
   ${chalk.bold('update')}                      Refresh the cached registry
   ${chalk.bold('cache')} status|clear          Manage the local cache
   ${chalk.bold('build')} <content-dir>        Build registry from content directory
@@ -54,20 +55,20 @@ ${chalk.bold.underline('Agent Piping Patterns')}
 
   ${chalk.dim('# Search → pick → fetch → save')}
   ${chalk.dim('$')} ID=$(chub search "stripe" --json | jq -r '.results[0].id')
-  ${chalk.dim('$')} chub get docs "$ID" --lang js -o .context/stripe.md
+  ${chalk.dim('$')} chub get "$ID" --lang js -o .context/stripe.md
 
-  ${chalk.dim('# Fetch multiple docs at once')}
-  ${chalk.dim('$')} chub get docs openai/chat stripe/payments -o .context/
+  ${chalk.dim('# Fetch multiple at once')}
+  ${chalk.dim('$')} chub get openai/chat stripe/api -o .context/
 
 ${chalk.bold.underline('Multi-Source Config')} ${chalk.dim('(~/.chub/config.yaml)')}
 
   ${chalk.dim('sources:')}
   ${chalk.dim('  - name: community')}
-  ${chalk.dim('    url: https://cdn.contexthub.dev/v1')}
+  ${chalk.dim('    url: https://cdn.aichub.org/v1')}
   ${chalk.dim('  - name: internal')}
   ${chalk.dim('    path: /path/to/local/docs')}
 
-  ${chalk.dim('# On id collision, use source: prefix: chub get docs internal:openai/chat')}
+  ${chalk.dim('# On id collision, use source: prefix: chub get internal:openai/chat')}
 `);
 }
 
@@ -83,10 +84,14 @@ program
   });
 
 // Commands that don't need registry
-const SKIP_REGISTRY = ['update', 'cache', 'build', 'help'];
+const SKIP_REGISTRY = ['update', 'cache', 'build', 'feedback', 'help'];
 
 program.hook('preAction', async (thisCommand) => {
   const cmdName = thisCommand.args?.[0] || thisCommand.name();
+  // Track command usage (fire-and-forget, never blocks)
+  if (cmdName !== 'chub') {
+    trackEvent('command_run', { command: cmdName }).catch(() => {});
+  }
   if (SKIP_REGISTRY.includes(cmdName)) return;
   if (thisCommand.parent?.name() === 'cache') return;
   // Don't fetch registry for default action (no command)
@@ -105,5 +110,9 @@ registerCacheCommand(program);
 registerSearchCommand(program);
 registerGetCommand(program);
 registerBuildCommand(program);
+registerFeedbackCommand(program);
 
 program.parse();
+
+// Flush analytics before exit (best-effort)
+process.on('beforeExit', () => shutdownAnalytics().catch(() => {}));
