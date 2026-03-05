@@ -1,9 +1,9 @@
 ---
-name: landingai-ade-typescript
+name: landingai-ade-sdk
 description: "TypeScript/JavaScript SDK reference for LandingAI's Agentic Document Extraction (ADE). Includes type definitions, Zod schema validation, async processing, error handling, type guards, and complete API context."
 metadata:
-  languages: "typescript/javascript"
-  versions: ">=2.2.0"
+  languages: "typescript"
+  versions: "2.2.0"
   updated-on: "2026-03-04"
   source: maintainer
   tags: "landingai,ade,typescript,javascript,sdk,zod,document-extraction,parse,extract,split,async"
