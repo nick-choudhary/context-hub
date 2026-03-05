@@ -10,7 +10,7 @@
 import { isTelemetryEnabled } from './telemetry.js';
 
 // PostHog project API key (public — standard for client-side analytics)
-const POSTHOG_KEY = 'phc_cUPXY1tAUkIOU9perzGcFYEtFQeCgUhUO6ejT79YLIk';
+const POSTHOG_KEY = 'phc_tO9mXIgcCuBccfN2Ut0quf6UFsd06u3Y6g1kqMaYdQX';
 const POSTHOG_HOST = 'https://us.i.posthog.com';
 
 let _posthog = null;
