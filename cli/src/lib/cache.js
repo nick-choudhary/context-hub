@@ -31,6 +31,10 @@ function getSourceRegistryPath(sourceName) {
   return join(getSourceDir(sourceName), 'registry.json');
 }
 
+function getSourceSearchIndexPath(sourceName) {
+  return join(getSourceDir(sourceName), 'search-index.json');
+}
+
 function readMeta(sourceName) {
   try {
     return JSON.parse(readFileSync(getSourceMetaPath(sourceName), 'utf8'));
@@ -53,6 +57,20 @@ function isSourceCacheFresh(sourceName) {
   return age < config.refresh_interval;
 }
 
+async function fetchRemoteText(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`${res.status} ${res.statusText}`);
+    }
+    return await res.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Fetch registry for a single remote source.
  */
@@ -61,23 +79,27 @@ async function fetchRemoteRegistry(source, force = false) {
     return;
   }
 
-  const url = `${source.url}/registry.json`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  let res;
+  const registryUrl = `${source.url}/registry.json`;
+  let registryText;
   try {
-    res = await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
-  if (!res.ok) {
-    throw new Error(`Failed to fetch registry from ${source.name}: ${res.status} ${res.statusText}`);
+    registryText = await fetchRemoteText(registryUrl);
+  } catch (err) {
+    throw new Error(`Failed to fetch registry from ${source.name}: ${err.message}`);
   }
 
-  const data = await res.text();
   const dir = getSourceDir(source.name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(getSourceRegistryPath(source.name), data);
+  writeFileSync(getSourceRegistryPath(source.name), registryText);
+
+  const searchIndexUrl = `${source.url}/search-index.json`;
+  try {
+    const searchIndexText = await fetchRemoteText(searchIndexUrl);
+    writeFileSync(getSourceSearchIndexPath(source.name), searchIndexText);
+  } catch {
+    // Avoid serving a stale local search index after a registry refresh.
+    rmSync(getSourceSearchIndexPath(source.name), { force: true });
+  }
+
   writeMeta(source.name, { ...readMeta(source.name), lastUpdated: Date.now() });
 }
 
@@ -139,6 +161,14 @@ export async function fetchFullBundle(sourceName) {
   if (existsSync(extractedRegistry)) {
     const regData = readFileSync(extractedRegistry, 'utf8');
     writeFileSync(getSourceRegistryPath(sourceName), regData);
+  }
+
+  const extractedSearchIndex = join(dataDir, 'search-index.json');
+  if (existsSync(extractedSearchIndex)) {
+    const searchIndexData = readFileSync(extractedSearchIndex, 'utf8');
+    writeFileSync(getSourceSearchIndexPath(sourceName), searchIndexData);
+  } else {
+    rmSync(getSourceSearchIndexPath(sourceName), { force: true });
   }
 
   writeMeta(sourceName, { ...readMeta(sourceName), lastUpdated: Date.now(), fullBundle: true });
@@ -341,6 +371,10 @@ export async function ensureRegistry() {
     const defaultDir = getSourceDir('default');
     mkdirSync(defaultDir, { recursive: true });
     writeFileSync(getSourceRegistryPath('default'), readFileSync(bundledRegistry, 'utf8'));
+    const bundledSearchIndex = join(getBundledDir(), 'search-index.json');
+    if (existsSync(bundledSearchIndex)) {
+      writeFileSync(getSourceSearchIndexPath('default'), readFileSync(bundledSearchIndex, 'utf8'));
+    }
     writeMeta('default', { lastUpdated: 0, bundledSeed: true }); // lastUpdated=0 → stale, so chub update will refresh
     return;
   }

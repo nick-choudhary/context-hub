@@ -1,7 +1,7 @@
 import { loadSourceRegistry, loadSearchIndex } from './cache.js';
 import { loadConfig } from './config.js';
 import { normalizeLanguage } from './normalize.js';
-import { search as bm25Search } from './bm25.js';
+import { buildIndexFromDocuments, search as bm25Search } from './bm25.js';
 
 let _merged = null;
 let _searchIndex = null;
@@ -56,47 +56,13 @@ function getMerged() {
   // Merge search indexes (combine documents and recompute IDF)
   if (searchIndexes.length > 0) {
     if (searchIndexes.length === 1) {
-      _searchIndex = searchIndexes[0];
+      const [singleIndex] = searchIndexes;
+      _searchIndex = singleIndex.invertedIndex
+        ? singleIndex
+        : buildIndexFromDocuments(singleIndex.documents, singleIndex.params);
     } else {
-      // Merge multiple indexes: combine documents, recompute global IDF
       const allDocuments = searchIndexes.flatMap((idx) => idx.documents);
-      const N = allDocuments.length;
-      const dfMap = {};
-      const fieldLengths = { name: [], description: [], tags: [] };
-
-      for (const doc of allDocuments) {
-        const allTerms = new Set([
-          ...(doc.tokens.name || []),
-          ...(doc.tokens.description || []),
-          ...(doc.tokens.tags || []),
-        ]);
-        for (const term of allTerms) {
-          dfMap[term] = (dfMap[term] || 0) + 1;
-        }
-        fieldLengths.name.push((doc.tokens.name || []).length);
-        fieldLengths.description.push((doc.tokens.description || []).length);
-        fieldLengths.tags.push((doc.tokens.tags || []).length);
-      }
-
-      const idf = {};
-      for (const [term, df] of Object.entries(dfMap)) {
-        idf[term] = Math.log((N - df + 0.5) / (df + 0.5) + 1);
-      }
-
-      const avg = (arr) => arr.length === 0 ? 0 : arr.reduce((a, b) => a + b, 0) / arr.length;
-      _searchIndex = {
-        version: '1.0.0',
-        algorithm: 'bm25',
-        params: searchIndexes[0].params,
-        totalDocs: N,
-        avgFieldLengths: {
-          name: avg(fieldLengths.name),
-          description: avg(fieldLengths.description),
-          tags: avg(fieldLengths.tags),
-        },
-        idf,
-        documents: allDocuments,
-      };
+      _searchIndex = buildIndexFromDocuments(allDocuments, searchIndexes[0].params);
     }
   }
 

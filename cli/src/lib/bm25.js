@@ -25,6 +25,10 @@ const FIELD_WEIGHTS = {
   description: 1.0,
 };
 
+function getDefaultParams() {
+  return { k1: DEFAULT_K1, b: DEFAULT_B };
+}
+
 /**
  * Tokenize text into lowercase terms with stop word removal.
  * Must be used identically at build time and search time.
@@ -38,6 +42,67 @@ export function tokenize(text) {
     .filter((t) => t.length > 1 && !STOP_WORDS.has(t));
 }
 
+function buildInvertedIndex(documents) {
+  const invertedIndex = Object.create(null);
+
+  for (const [docIndex, doc] of documents.entries()) {
+    const allTerms = new Set([
+      ...(doc.tokens.name || []),
+      ...(doc.tokens.description || []),
+      ...(doc.tokens.tags || []),
+    ]);
+
+    for (const term of allTerms) {
+      if (!invertedIndex[term]) invertedIndex[term] = [];
+      invertedIndex[term].push(docIndex);
+    }
+  }
+
+  return invertedIndex;
+}
+
+export function buildIndexFromDocuments(documents, params = getDefaultParams()) {
+  const dfMap = Object.create(null); // document frequency per term (across all fields)
+  const fieldLengths = { name: [], description: [], tags: [] };
+
+  for (const doc of documents) {
+    const nameTokens = doc.tokens.name || [];
+    const descTokens = doc.tokens.description || [];
+    const tagTokens = doc.tokens.tags || [];
+
+    fieldLengths.name.push(nameTokens.length);
+    fieldLengths.description.push(descTokens.length);
+    fieldLengths.tags.push(tagTokens.length);
+
+    const allTerms = new Set([...nameTokens, ...descTokens, ...tagTokens]);
+    for (const term of allTerms) {
+      dfMap[term] = (dfMap[term] || 0) + 1;
+    }
+  }
+
+  const N = documents.length;
+  const idf = Object.create(null);
+  for (const [term, df] of Object.entries(dfMap)) {
+    idf[term] = Math.log((N - df + 0.5) / (df + 0.5) + 1);
+  }
+
+  const avg = (arr) => arr.length === 0 ? 0 : arr.reduce((a, b) => a + b, 0) / arr.length;
+  return {
+    version: '1.0.0',
+    algorithm: 'bm25',
+    params,
+    totalDocs: N,
+    avgFieldLengths: {
+      name: avg(fieldLengths.name),
+      description: avg(fieldLengths.description),
+      tags: avg(fieldLengths.tags),
+    },
+    idf,
+    documents,
+    invertedIndex: buildInvertedIndex(documents),
+  };
+}
+
 /**
  * Build a BM25 search index from registry entries.
  * Called during `chub build`.
@@ -47,8 +112,6 @@ export function tokenize(text) {
  */
 export function buildIndex(entries) {
   const documents = [];
-  const dfMap = {}; // document frequency per term (across all fields)
-  const fieldLengths = { name: [], description: [], tags: [] };
 
   for (const entry of entries) {
     const nameTokens = tokenize(entry.name);
@@ -63,43 +126,8 @@ export function buildIndex(entries) {
         tags: tagTokens,
       },
     });
-
-    fieldLengths.name.push(nameTokens.length);
-    fieldLengths.description.push(descTokens.length);
-    fieldLengths.tags.push(tagTokens.length);
-
-    // Count document frequency — a term counts once per document (union of all fields)
-    const allTerms = new Set([...nameTokens, ...descTokens, ...tagTokens]);
-    for (const term of allTerms) {
-      dfMap[term] = (dfMap[term] || 0) + 1;
-    }
   }
-
-  const N = documents.length;
-
-  // Compute IDF for each term
-  const idf = {};
-  for (const [term, df] of Object.entries(dfMap)) {
-    idf[term] = Math.log((N - df + 0.5) / (df + 0.5) + 1);
-  }
-
-  // Compute average field lengths
-  const avg = (arr) => arr.length === 0 ? 0 : arr.reduce((a, b) => a + b, 0) / arr.length;
-  const avgFieldLengths = {
-    name: avg(fieldLengths.name),
-    description: avg(fieldLengths.description),
-    tags: avg(fieldLengths.tags),
-  };
-
-  return {
-    version: '1.0.0',
-    algorithm: 'bm25',
-    params: { k1: DEFAULT_K1, b: DEFAULT_B },
-    totalDocs: N,
-    avgFieldLengths,
-    idf,
-    documents,
-  };
+  return buildIndexFromDocuments(documents);
 }
 
 /**
@@ -109,7 +137,7 @@ function scoreField(queryTerms, fieldTokens, idf, avgFieldLen, k1, b) {
   if (fieldTokens.length === 0) return 0;
 
   // Build term frequency map for this field
-  const tf = {};
+  const tf = Object.create(null);
   for (const t of fieldTokens) {
     tf[t] = (tf[t] || 0) + 1;
   }
@@ -130,22 +158,46 @@ function scoreField(queryTerms, fieldTokens, idf, avgFieldLen, k1, b) {
   return score;
 }
 
-/**
- * Search the BM25 index with a query string.
- *
- * @param {string} query - The search query
- * @param {Object} index - The pre-built BM25 index
- * @param {Object} opts - Options: { limit }
- * @returns {Array} Sorted results: [{ id, score }]
- */
-export function search(query, index, opts = {}) {
+function getCandidateDocIndexes(queryTerms, index) {
+  if (!index.invertedIndex) {
+    return index.documents.map((_, docIndex) => docIndex);
+  }
+
+  const candidateIndexes = new Set();
+  for (const term of new Set(queryTerms)) {
+    const postings = index.invertedIndex[term];
+    if (!postings) continue;
+    for (const docIndex of postings) {
+      candidateIndexes.add(docIndex);
+    }
+  }
+
+  return [...candidateIndexes];
+}
+
+function runSearch(query, index, opts = {}) {
   const queryTerms = tokenize(query);
-  if (queryTerms.length === 0) return [];
+  const totalDocs = index.documents.length;
+
+  if (queryTerms.length === 0) {
+    return {
+      results: [],
+      stats: {
+        totalDocs,
+        candidateDocCount: 0,
+        scoredDocCount: 0,
+        matchedDocCount: 0,
+        usedInvertedIndex: !!index.invertedIndex,
+      },
+    };
+  }
 
   const { k1, b } = index.params;
   const results = [];
+  const candidateDocIndexes = getCandidateDocIndexes(queryTerms, index);
 
-  for (const doc of index.documents) {
+  for (const docIndex of candidateDocIndexes) {
+    const doc = index.documents[docIndex];
     let totalScore = 0;
 
     for (const [field, weight] of Object.entries(FIELD_WEIGHTS)) {
@@ -161,10 +213,32 @@ export function search(query, index, opts = {}) {
   }
 
   results.sort((a, b) => b.score - a.score);
+  const limitedResults = opts.limit ? results.slice(0, opts.limit) : results;
 
-  if (opts.limit) {
-    return results.slice(0, opts.limit);
-  }
+  return {
+    results: limitedResults,
+    stats: {
+      totalDocs,
+      candidateDocCount: candidateDocIndexes.length,
+      scoredDocCount: candidateDocIndexes.length,
+      matchedDocCount: results.length,
+      usedInvertedIndex: !!index.invertedIndex,
+    },
+  };
+}
 
-  return results;
+/**
+ * Search the BM25 index with a query string.
+ *
+ * @param {string} query - The search query
+ * @param {Object} index - The pre-built BM25 index
+ * @param {Object} opts - Options: { limit }
+ * @returns {Array} Sorted results: [{ id, score }]
+ */
+export function search(query, index, opts = {}) {
+  return runSearch(query, index, opts).results;
+}
+
+export function searchWithStats(query, index, opts = {}) {
+  return runSearch(query, index, opts);
 }
